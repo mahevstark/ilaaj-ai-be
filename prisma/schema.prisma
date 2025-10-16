@@ -1,0 +1,603 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  PATIENT
+}
+
+enum LoginMethod {
+  IMPLANNER
+  GOOGLE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ContactMethod {
+  EMAIL
+  PHONE
+  WHATSAPP
+}
+
+enum ClinicStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  SUSPENDED
+}
+
+enum ClinicType {
+  DENTAL
+  MEDICAL
+  SPECIALIZED
+  MULTI_SPECIALTY
+}
+
+enum DoctorRole {
+  OWNER
+  PARTNER
+  EMPLOYEE
+  CONTRACTOR
+}
+
+enum DoctorStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  SUSPENDED
+}
+
+enum TreatmentStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  DISCONTINUED
+}
+
+enum ClinicRequestStatus {
+  PENDING
+  CONTACTED
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum ConsultationStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum ConsultationType {
+  SECOND_OPINION
+  TREATMENT_PLANNING
+  FOLLOW_UP
+  EMERGENCY
+  GENERAL_CONSULTATION
+}
+
+model User {
+  id             Int              @id @default(autoincrement())
+  name           String?
+  email          String           @unique
+  password       String
+  role           Role             @default(PATIENT)
+  phone          String?
+  country        String?
+  contactMethod  ContactMethod?
+  age            Int?
+  gdprConsent    Boolean          @default(false)
+  kvkkConsent    Boolean          @default(false)
+  emailVerified  Boolean          @default(false)
+  lastLoginAt    DateTime?
+  loginMethod    LoginMethod      @default(IMPLANNER)
+  profilePicture String?
+  status         UserStatus       @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  medicalHistory MedicalHistory[]
+  treatmentPlans TreatmentPlan[]
+  questionnaires Questionnaire[]
+  clinicId       Int?
+  clinic         Clinic?          @relation(fields: [clinicId], references: [id])
+  appointments   Appointment[]
+  clinicReviews  ClinicReview[]
+  doctorAppointments DoctorAppointment[]
+  treatmentAppointments TreatmentAppointment[]
+  clinicRequests ClinicRequest[]
+  assignedClinicRequests ClinicRequest[] @relation("ClinicRequestAdmin")
+  consultations Consultation[]
+}
+
+model MedicalHistory {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  boneLossHistory Boolean?
+  smoking         Boolean?
+  chronicDiseases String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model TreatmentPlan {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storedPlan      String?
+  hasExistingPlan Boolean?
+  budgetCents     Int? // in cents
+
+  source        String? // "xray" or "form"
+  hasXRay       Boolean?
+  selectedTeeth Json? // JSON array of selected teeth
+  // if source is "xray"
+  title         String?
+  summary       String?
+  // X-ray analysis specific
+  initialDataId String? // CranioCatch analysis ID
+  xrayUrl       String? // Cloudinary URL of uploaded X-ray
+  analysisJson  Json? // Full analysis results from CranioCatch
+
+  // if source is "form"
+  implants       Int?
+  crowns         Int?
+  fillings       Int?
+  rootCanals     Int?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  questionnaires Questionnaire[]
+  clinicRequests ClinicRequest[]
+  consultations Consultation[]
+}
+
+model Questionnaire {
+  id               Int            @id @default(autoincrement())
+  userId           Int
+  user             User           @relation(fields: [userId], references: [id])
+  // Optional link to a specific treatment plan
+  planId           Int?
+  plan             TreatmentPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+  age              Int?
+  boneLoss         Boolean?
+  smoking          Boolean?
+  chronicDiseases  String?
+  budgetPreference String?
+  medicalCondition String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
+
+model Clinic {
+  id                Int            @id @default(autoincrement())
+  name              String
+  slug              String         @unique
+  description       String?
+  email             String         @unique
+  phone             String?
+  website           String?
+  
+  // Address Information
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  postalCode        String?
+  latitude          Float?
+  longitude         Float?
+  
+  // Business Information
+  clinicType        ClinicType     @default(DENTAL)
+  status            ClinicStatus   @default(PENDING)
+  licenseNumber     String?
+  taxId             String?
+  registrationDate  DateTime?
+  
+  // Contact Information
+  contactPerson     String?
+  contactEmail      String?
+  contactPhone      String?
+  emergencyContact  String?
+  
+  // Services and Specialties
+  services          String[]       @default([])
+  specialties       String[]       @default([])
+  languages         String[]       @default([])
+  
+  // Operating Hours (JSON format for flexibility)
+  operatingHours    Json?
+  
+  // Social Media and Online Presence
+  socialMedia       Json?
+  onlinePresence    Json?
+  
+  // Clinic Photos (Required - Minimum 1, Maximum 10)
+  photos            String[]      @default([]) // Array of Cloudinary URLs
+  
+  // Price Information (Required)
+  pricePerImplant   Int?          // in cents
+  pricePerCrown     Int?          // in cents
+  pricePerRootCanal Int?          // in cents
+  pricePerFilling   Int?          // in cents
+  
+  // Google Maps Integration (Required)
+  googleMapsLink    String?       // Google Maps URL
+  googleRating      Float?        // Fetched from Google Maps
+  googleReviewCount Int?          // Fetched from Google Maps
+  
+  // Google Reviews Data
+  googlePlaceId     String?       // Google Places API place ID
+  googleReviews     Json?         // Array of Google reviews
+  googleReviewStats Json?         // Review statistics and distribution
+  lastReviewFetch   DateTime?     // Last time reviews were fetched
+  
+  // Third-party Integration
+  thirdPartyId      String?        @unique
+  thirdPartySource  String?        // e.g., "google_places", "yelp", "healthgrades"
+  thirdPartyData    Json?          // Store additional third-party data
+  lastSyncedAt      DateTime?
+  
+  // Verification and Quality
+  isVerified        Boolean        @default(false)
+  verificationDate  DateTime?
+  rating            Float?         @default(0.0)
+  reviewCount       Int            @default(0)
+  
+  // Capacity and Statistics
+  maxPatients       Int?
+  currentPatients   Int            @default(0)
+  totalAppointments Int            @default(0)
+  
+  // Financial Information
+  pricingTier       String?        // e.g., "premium", "standard", "budget"
+  acceptsInsurance  Boolean        @default(false)
+  insuranceProviders String[]      @default([])
+  
+  // System Fields
+  createdBy         Int?           // Admin user who created this clinic
+  updatedBy         Int?           // Admin user who last updated this clinic
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  // Relations
+  users             User[]
+  appointments      Appointment[]
+  reviews           ClinicReview[]
+  doctors           DoctorClinic[]
+  treatments        Treatment[]
+  clinicRequests    ClinicRequest[]
+  
+  // Indexes for performance
+  @@index([status])
+  @@index([clinicType])
+  @@index([city])
+  @@index([country])
+  @@index([thirdPartySource])
+  @@index([isVerified])
+  @@index([createdAt])
+}
+
+model Appointment {
+  id          Int      @id @default(autoincrement())
+  clinicId    Int
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointmentDate DateTime
+  status      String   @default("scheduled") // scheduled, completed, cancelled, rescheduled
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([clinicId])
+  @@index([userId])
+  @@index([appointmentDate])
+}
+
+model ClinicReview {
+  id        Int      @id @default(autoincrement())
+  clinicId  Int
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int      // 1-5 stars
+  comment   String?
+  isVerified Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([clinicId])
+  @@index([userId])
+  @@index([rating])
+}
+
+model Doctor {
+  id                Int            @id @default(autoincrement())
+  firstName         String
+  lastName          String
+  email             String         @unique
+  phone             String?
+  specialization    String[]       @default([])
+  qualifications    String[]       @default([])
+  languages         String[]       @default([])
+  experience        Int?           // years of experience
+  licenseNumber     String?        @unique
+  licenseExpiry     DateTime?
+  status            DoctorStatus   @default(ACTIVE)
+  bio               String?
+  profileImage      String?
+  
+  // Contact Information
+  address           String?
+  city              String?
+  state             String?
+  country           String?
+  postalCode        String?
+  
+  // Professional Information
+  education         Json?          // Store education details as JSON
+  certifications    String[]       @default([])
+  awards            String[]       @default([])
+  publications      String[]       @default([])
+  
+  // Availability
+  workingHours      Json?          // Store working hours as JSON
+  consultationFee   Int?           // in cents
+  isAvailable       Boolean        @default(true)
+  
+  // System Fields
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  // Relations
+  clinicAssociations DoctorClinic[]
+  appointments      DoctorAppointment[]
+  
+  // Indexes for performance
+  @@index([status])
+  @@index([specialization])
+  @@index([city])
+  @@index([isAvailable])
+  @@index([createdAt])
+}
+
+model DoctorClinic {
+  id          Int      @id @default(autoincrement())
+  doctorId    Int
+  doctor      Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinicId    Int
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  role        DoctorRole @default(EMPLOYEE)
+  startDate   DateTime @default(now())
+  endDate     DateTime?
+  isActive    Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([doctorId, clinicId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([isActive])
+}
+
+model DoctorAppointment {
+  id          Int      @id @default(autoincrement())
+  doctorId    Int
+  doctor      Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointmentDate DateTime
+  duration    Int?     // in minutes
+  status      String   @default("scheduled") // scheduled, completed, cancelled, rescheduled
+  notes       String?
+  diagnosis   String?
+  treatment   String?
+  prescription String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([doctorId])
+  @@index([userId])
+  @@index([appointmentDate])
+}
+
+model Treatment {
+  id                Int            @id @default(autoincrement())
+  name              String
+  description       String?
+  category          String?        // e.g., "Cardiology", "Dentistry", "General"
+  subcategory       String?        // e.g., "Echocardiogram", "Dental Implant"
+  
+  // Pricing Information
+  basePrice         Int?           // in cents
+  priceRange        Json?          // { min: 10000, max: 50000 } in cents
+  currency          String         @default("USD")
+  isPriceNegotiable Boolean        @default(false)
+  
+  // Duration and Scheduling
+  duration          Int?           // in minutes
+  preparationTime   Int?           // in minutes
+  recoveryTime      Int?           // in minutes
+  
+  // Medical Information
+  requirements      String[]       @default([]) // e.g., ["Fasting", "Blood Test"]
+  contraindications String[]       @default([]) // e.g., ["Pregnancy", "Heart Condition"]
+  sideEffects       String[]       @default([])
+  successRate       Float?         // percentage
+  
+  // Availability
+  status            TreatmentStatus @default(ACTIVE)
+  isAvailable       Boolean        @default(true)
+  maxDailyBookings  Int?
+  
+  // Clinic Relationship
+  clinicId          Int
+  clinic            Clinic         @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  
+  // Additional Information
+  equipment         String[]       @default([])
+  certifications    String[]       @default([])
+  insuranceCoverage String[]       @default([])
+  ageRestrictions   Json?          // { min: 18, max: 65 }
+  
+  // System Fields
+  createdBy         Int?           // Admin user who created this treatment
+  updatedBy         Int?           // Admin user who last updated this treatment
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  // Relations
+  appointments      TreatmentAppointment[]
+  
+  // Indexes for performance
+  @@index([clinicId])
+  @@index([category])
+  @@index([status])
+  @@index([isAvailable])
+  @@index([createdAt])
+}
+
+model TreatmentAppointment {
+  id          Int      @id @default(autoincrement())
+  treatmentId Int
+  treatment   Treatment @relation(fields: [treatmentId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointmentDate DateTime
+  duration    Int?     // in minutes
+  status      String   @default("scheduled") // scheduled, completed, cancelled, rescheduled
+  notes       String?
+  price       Int?     // final price in cents
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([treatmentId])
+  @@index([userId])
+  @@index([appointmentDate])
+}
+
+model ClinicRequest {
+  id                Int                 @id @default(autoincrement())
+  userId            Int
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinicId          Int
+  clinic            Clinic              @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  treatmentPlanId   Int?
+  treatmentPlan     TreatmentPlan?      @relation(fields: [treatmentPlanId], references: [id], onDelete: SetNull)
+  
+  // Request Details
+  status            ClinicRequestStatus @default(PENDING)
+  requestedTreatments Json?            // Array of requested treatments
+  estimatedCost     Int?               // Estimated cost in cents
+  actualCost        Int?               // Actual cost after clinic contact in cents
+  notes             String?            // Admin notes
+  adminNotes        String?            // Internal admin notes
+  
+  // Contact Information
+  userPhone         String?
+  userEmail         String?
+  preferredContactMethod ContactMethod?
+  
+  // Clinic Response
+  clinicResponse    String?            // Clinic's response/availability
+  availableDates    Json?              // Available appointment dates from clinic
+  scheduledDate     DateTime?          // Final scheduled appointment date
+  
+  // Admin Management
+  assignedAdminId   Int?               // Admin user assigned to handle this request
+  assignedAdmin     User?              @relation("ClinicRequestAdmin", fields: [assignedAdminId], references: [id])
+  lastContactDate   DateTime?          // Last time admin contacted the clinic
+  nextFollowUpDate  DateTime?          // Next follow-up date
+  
+  // System Fields
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  
+  // Indexes for performance
+  @@index([userId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([assignedAdminId])
+  @@index([createdAt])
+  @@index([lastContactDate])
+}
+
+model Consultation {
+  id                Int               @id @default(autoincrement())
+  userId            Int
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  treatmentPlanId   Int?
+  treatmentPlan     TreatmentPlan?    @relation(fields: [treatmentPlanId], references: [id], onDelete: SetNull)
+  
+  // Consultation Details
+  type              ConsultationType  @default(SECOND_OPINION)
+  status            ConsultationStatus @default(SCHEDULED)
+  scheduledAt       DateTime
+  duration          Int               @default(60) // in minutes
+  
+  // Patient Information
+  patientName       String
+  patientEmail      String
+  patientPhone      String?
+  patientNotes      String?
+  
+  // Google Calendar Integration
+  googleEventId     String?           @unique
+  meetingLink       String?
+  calendarUrl       String?
+  
+  // Consultation Content
+  agenda            String?           // What will be discussed
+  preparationNotes  String?           // What patient should prepare
+  followUpNotes     String?           // Notes from the consultation
+  recommendations   String?           // Doctor's recommendations
+  
+  // System Fields
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  cancelledAt       DateTime?
+  completedAt       DateTime?
+  
+  // Indexes for performance
+  @@index([userId])
+  @@index([treatmentPlanId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([type])
+  @@index([googleEventId])
+  @@index([createdAt])
+}
+
+model UnavailableSlot {
+  id          Int      @id @default(autoincrement())
+  startTime   DateTime
+  endTime     DateTime
+  reason      String?  @default("Unavailable")
+  createdBy   String?  // Admin user ID who created this slot
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Indexes for performance
+  @@index([startTime])
+  @@index([endTime])
+  @@index([createdAt])
+}

@@ -1,0 +1,52 @@
+{
+  "name": "implaner-be",
+  "engines": {
+    "node": "20.19.3"
+  },
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node main.js",
+    "dev": "node --watch main.js",
+    "gen": "prisma generate",
+    "seed": "node seed.js",
+    "seed:advanced": "node seed-advanced.js",
+    "seed:clinics": "node seed-clinics.js",
+    "seed:reset": "prisma migrate reset --force && node seed.js",
+    "seed:reset:advanced": "prisma migrate reset --force && node seed-advanced.js",
+    "seed:reset:clinics": "prisma migrate reset --force && node seed-clinics.js",
+    "setup": "npm install && npm run gen && echo 'Please create .env file with DATABASE_URL and other required variables'",
+    "make": "npm run setup && npm run seed",
+    "make:advanced": "npm run setup && npm run seed:advanced",
+    "make:reset": "npm run setup && npm run seed:reset",
+    "make:reset:advanced": "npm run setup && npm run seed:reset:advanced"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@prisma/client": "^6.14.0",
+    "axios": "^1.11.0",
+    "bcryptjs": "^3.0.2",
+    "buffer": "^6.0.3",
+    "cloudinary": "^2.7.0",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.1.5",
+    "express-validator": "^7.0.1",
+    "googleapis": "^160.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "nodemailer": "^7.0.5",
+    "prisma": "^6.14.0",
+    "slugify": "^1.6.6",
+    "twilio": "^5.10.0",
+    "undici": "^7.15.0"
+  }
+}
