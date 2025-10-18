@@ -13,10 +13,62 @@ const client = twilio(
   process.env.TWILIO_AUTH_TOKEN
 );
 
+// Debug: Log Twilio credentials (masked for security)
+console.log('🔧 Twilio Configuration:');
+console.log('Account SID:', process.env.TWILIO_ACCOUNT_SID ? `${process.env.TWILIO_ACCOUNT_SID.substring(0, 8)}...` : 'NOT SET');
+console.log('Auth Token:', process.env.TWILIO_AUTH_TOKEN ? `${process.env.TWILIO_AUTH_TOKEN.substring(0, 8)}...` : 'NOT SET');
+console.log('Phone Number:', process.env.TWILIO_PHONE_NUMBER || 'NOT SET');
+
 // Generate 6-digit OTP
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
+
+// Clean up expired OTPs
+const cleanupExpiredOTPs = async () => {
+  try {
+    await prisma.oTP.deleteMany({
+      where: {
+        expiresAt: { lt: new Date() }
+      }
+    });
+  } catch (error) {
+    console.error('Error cleaning up expired OTPs:', error);
+  }
+};
+
+// Test Twilio connection
+router.get('/test-twilio', async (req, res) => {
+  try {
+    console.log('🧪 Testing Twilio connection...');
+    
+    // Test Twilio credentials by fetching account info
+    const account = await client.api.accounts(process.env.TWILIO_ACCOUNT_SID).fetch();
+    
+    res.json({
+      success: true,
+      message: 'Twilio connection successful',
+      data: {
+        accountSid: account.sid,
+        accountName: account.friendlyName,
+        status: account.status,
+        phoneNumber: process.env.TWILIO_PHONE_NUMBER
+      }
+    });
+  } catch (error) {
+    console.error('❌ Twilio connection test failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Twilio connection failed',
+      error: error.message,
+      details: {
+        accountSid: process.env.TWILIO_ACCOUNT_SID ? 'SET' : 'NOT SET',
+        authToken: process.env.TWILIO_AUTH_TOKEN ? 'SET' : 'NOT SET',
+        phoneNumber: process.env.TWILIO_PHONE_NUMBER || 'NOT SET'
+      }
+    });
+  }
+});
 
 // Check if user exists
 router.post('/check-user', [
@@ -40,7 +92,7 @@ router.post('/check-user', [
     
     console.log('🔍 Check user - Phone number received:', phoneNumber);
 
-    // Check if user exists
+    // Check if user exists and is verified
     const user = await prisma.user.findUnique({
       where: { phoneNumber },
       select: {
@@ -53,12 +105,19 @@ router.post('/check-user', [
       }
     });
 
-    if (user) {
+    if (user && user.isVerified) {
       return res.json({
         success: true,
         exists: true,
         user: user,
-        message: 'User already registered'
+        message: 'User already registered and verified'
+      });
+    } else if (user && !user.isVerified) {
+      return res.json({
+        success: true,
+        exists: true,
+        user: user,
+        message: 'User exists but not verified'
       });
     } else {
       return res.json({
@@ -104,7 +163,7 @@ router.post('/auto-login', [
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: 'User not found. Please register first.'
       });
     }
 
@@ -169,21 +228,52 @@ router.post('/send-otp', [
     
     console.log('📱 Send OTP - Phone number received:', phoneNumber);
 
-    // Check if user exists, create if not
-    let user = await prisma.user.findUnique({
+    // Check if user already exists and is verified
+    const existingUser = await prisma.user.findUnique({
       where: { phoneNumber }
     });
     
-    if (!user) {
-      user = await prisma.user.create({
-        data: { phoneNumber }
+    if (existingUser && existingUser.isVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already registered and verified'
       });
     }
+    
+    // If user exists but is not verified, allow OTP resending
+    if (existingUser && !existingUser.isVerified) {
+      console.log('📱 User exists but not verified, allowing OTP resend');
+    }
+
+    // Clean up expired OTPs first
+    await cleanupExpiredOTPs();
 
     // Generate OTP
     const otpCode = generateOTP();
 
-    // Save OTP to database
+    // Create or update user first (required for foreign key constraint)
+    let user = existingUser;
+    if (!user) {
+      // Create new user if doesn't exist
+      user = await prisma.user.create({
+        data: { 
+          phoneNumber,
+          isVerified: false 
+        }
+      });
+      console.log('📱 Created new user for OTP');
+    } else {
+      // User exists but not verified, update lastActive
+      user = await prisma.user.update({
+        where: { phoneNumber },
+        data: { 
+          lastActive: new Date() 
+        }
+      });
+      console.log('📱 Updated existing unverified user for OTP resend');
+    }
+
+    // Save OTP to database (now user exists)
     await prisma.oTP.create({
       data: {
         phoneNumber,
@@ -192,28 +282,70 @@ router.post('/send-otp', [
       }
     });
 
-    // For development: Log OTP to console instead of sending SMS
-    console.log(`🔐 OTP for ${phoneNumber}: ${otpCode}`);
-    console.log(`📱 Use this OTP to verify: ${otpCode}`);
-    
-    // TODO: Uncomment below for production SMS sending
-    // try {
-    //   await client.messages.create({
-    //     body: `Your Bandage verification code is: ${otpCode}. This code will expire in 5 minutes.`,
-    //     from: process.env.TWILIO_PHONE_NUMBER,
-    //     to: phoneNumber
-    //   });
-    // } catch (twilioError) {
-    //   console.error('Twilio error:', twilioError);
-    //   return res.status(503).json({
-    //     success: false,
-    //     message: 'Failed to send SMS. Please try again later.'
-    //   });
-    // }
+    // Send SMS via Twilio
+    try {
+      console.log(`📱 Sending SMS to ${phoneNumber}...`);
+      console.log(`📱 From: ${process.env.TWILIO_PHONE_NUMBER}`);
+      console.log(`📱 To: ${phoneNumber}`);
+      
+      const message = await client.messages.create({
+        body: `Your Ilaaj AI verification code is: ${otpCode}. This code will expire in 5 minutes.`,
+        from: process.env.TWILIO_PHONE_NUMBER,
+        to: phoneNumber
+      });
+      
+      console.log(`✅ SMS sent successfully. Message SID: ${message.sid}`);
+      console.log(`✅ Message Status: ${message.status}`);
+      console.log(`🔐 OTP for ${phoneNumber}: ${otpCode}`);
+    } catch (twilioError) {
+      console.error('❌ Twilio SMS error:', twilioError);
+      console.error('❌ Error Code:', twilioError.code);
+      console.error('❌ Error Message:', twilioError.message);
+      console.error('❌ More Info:', twilioError.moreInfo);
+      
+      // Handle trial account restrictions
+      if (twilioError.code === 21608) {
+        console.log('\n💡 TRIAL ACCOUNT RESTRICTION DETECTED');
+        console.log('📱 Trial accounts can only send SMS to verified numbers');
+        console.log('🔧 Solutions:');
+        console.log('1. Upgrade to a full Twilio account');
+        console.log('2. Verify the phone number in Twilio Console');
+        console.log('3. Use the OTP from console for development');
+        console.log('\n🔐 DEVELOPMENT OTP:');
+        console.log(`📱 Phone: ${phoneNumber}`);
+        console.log(`🔐 OTP: ${otpCode}`);
+        console.log(`⏰ Expires: 5 minutes`);
+        
+        // Return success with development OTP
+        return res.json({
+          success: true,
+          message: 'OTP generated successfully (SMS blocked by trial account restrictions)',
+          data: {
+            phoneNumber,
+            expiresIn: 300,
+            otp: otpCode,
+            development: true,
+            note: 'SMS blocked by trial account. Use OTP from server console.'
+          }
+        });
+      }
+      
+      // Log OTP to console as fallback for development
+      console.log(`🔐 OTP for ${phoneNumber}: ${otpCode}`);
+      console.log(`📱 Use this OTP to verify: ${otpCode}`);
+      
+      return res.status(503).json({
+        success: false,
+        message: 'Failed to send SMS. Please try again later.',
+        error: twilioError.message,
+        errorCode: twilioError.code,
+        moreInfo: twilioError.moreInfo
+      });
+    }
 
     res.json({
       success: true,
-      message: 'OTP generated successfully (check console for development)',
+      message: 'OTP sent successfully via SMS',
       data: {
         phoneNumber,
         expiresIn: 300, // 5 minutes in seconds
@@ -254,6 +386,9 @@ router.post('/verify-otp', [
 
     const { phoneNumber, otp } = req.body;
 
+    // Clean up expired OTPs first
+    await cleanupExpiredOTPs();
+
     // Find OTP record
     const otpRecord = await prisma.oTP.findFirst({
       where: {
@@ -285,7 +420,7 @@ router.post('/verify-otp', [
       data: { isUsed: true }
     });
 
-    // Update user verification status
+    // Update user verification status (user should already exist from send-otp)
     const user = await prisma.user.update({
       where: { phoneNumber },
       data: { 
@@ -297,7 +432,7 @@ router.post('/verify-otp', [
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: 'User not found. Please request OTP first.'
       });
     }
 
@@ -437,19 +572,36 @@ router.put('/profile', [
 });
 
 // Logout (optional - mainly for token blacklisting in production)
-router.post('/logout', auth, async (req, res) => {
+router.post('/logout', async (req, res) => {
   try {
-    // In a production app, you might want to blacklist the token
-    // For now, we'll just return success
+    // Try to get the token and validate it, but don't fail if it's invalid
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log('Logout: Valid token for user', decoded.userId);
+        
+        // In a production app, you might want to blacklist the token here
+        // For now, we'll just log the logout
+      } catch (tokenError) {
+        console.log('Logout: Invalid or expired token, but allowing logout');
+      }
+    } else {
+      console.log('Logout: No token provided, but allowing logout');
+    }
+    
+    // Always return success for logout, even if token is invalid
     res.json({
       success: true,
       message: 'Logged out successfully'
     });
   } catch (error) {
     console.error('Logout error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
+    // Even if there's an error, return success for logout
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
     });
   }
 });
